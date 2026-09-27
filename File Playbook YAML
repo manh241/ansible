@@ -1,0 +1,65 @@
+---
+- name: Kịch bản toàn diện triển khai hệ thống Ứng dụng  # TÊN KỊCH BẢN: Đặt tên cho toàn bộ file này, sẽ in ra màn hình khi chạy
+  hosts: webservers                          # ĐỐI TƯỢNG: Áp dụng kịch bản lên nhóm máy chủ tên là 'webservers' (lấy từ file inventory)
+  become: yes                                # LEO THANG QUYỀN: Bật chế độ chạy dưới quyền root (tương đương lệnh sudo)
+  become_method: sudo                        # PHƯƠNG THỨC: Chỉ định sử dụng lệnh 'sudo' để lấy quyền root
+  become_user: root                          # NGƯỜI DÙNG: Chỉ định tài khoản cụ thể muốn leo thang lên là 'root'
+  gather_facts: yes                          # THU THẬP DỮ LIỆU: Tự động quét thông tin máy (OS, IP, RAM...) trước khi chạy để làm biến số
+
+  vars:                                      # KHAI BÁO BIẾN: Nơi đặt các biến số cố định dùng chung trong file này
+    app_port: 8080                           # Tạo biến 'app_port' có giá trị là 8080 (gọi lại bằng cú pháp {{ app_port }})
+    admin_email: admin@domain.com            # Tạo biến 'admin_email' lưu địa chỉ email
+  
+  vars_files:                                # GỌI BIẾN TỪ FILE KHÁC: Dùng để giấu mật khẩu, tránh ghi text thô trực tiếp vào đây
+    - secret_passwords.yml                   # Tên file chứa biến (file này thường được mã hóa bảo mật bằng Ansible Vault)
+
+  pre_tasks:                                 # VIỆC CHẠY TRƯỚC TIÊN: Các tác vụ ưu tiên làm đầu tiên trước khi vào phần việc chính
+    - name: 0. Cập nhật cache hệ thống       # Tên của công việc (Task 0)
+      apt:                                   # GỌI MODULE 'apt': Quản lý cài đặt phần mềm trên Ubuntu/Debian
+        update_cache: yes                    # Tham số: Tương đương lệnh 'apt-get update'
+      changed_when: false                    # KHÔNG GHI NHẬN THAY ĐỔI: Báo cho Ansible biết lệnh này chỉ là update list, không làm thay đổi hệ thống (để lúc chạy hiện màu xanh lá, thay vì màu vàng)
+
+  tasks:                                     # DANH SÁCH VIỆC CHÍNH: Bắt đầu chuỗi công việc cốt lõi của kịch bản
+    - name: 1. Cài phần mềm bằng vòng lặp    # Tên công việc (Task 1)
+      apt:                                   # Gọi lại module 'apt'
+        name: "{{ item }}"                   # BIẾN LẶP: "{{ item }}" sẽ tự động hút từng chữ ở phần 'loop' bên dưới đắp vào đây
+        state: present                       # YÊU CẦU: Đảm bảo phần mềm đã được cài đặt (present)
+      loop:                                  # VÒNG LẶP: Thay vì viết 3 task giống nhau, dùng loop để duyệt qua danh sách này
+        - curl                               # Chạy lần 1: cài curl
+        - wget                               # Chạy lần 2: cài wget
+        - htop                               # Chạy lần 3: cài htop
+      tags: install_base                     # GẮN THẺ: Đánh dấu task này là 'install_base'. Nếu gõ lệnh chạy thêm '--tags "install_base"', nó sẽ bỏ qua mọi việc khác và CHỈ chạy tác vụ này.
+
+    - name: 2. Đẩy file cấu hình và phân quyền # Tên công việc (Task 2)
+      template:                              # GỌI MODULE 'template': Chuyên copy file và hỗ trợ render các biến {{ }} bên trong file đó
+        src: app_config.j2                   # Tên file gốc trên máy của bạn (nằm ở thư mục templates/)
+        dest: /etc/myapp/config.conf         # Đường dẫn lưu file trên máy chủ đích
+        owner: root                          # PHÂN QUYỀN: Chỉ định người sở hữu file là root
+        group: root                          # PHÂN QUYỀN: Chỉ định nhóm sở hữu file là root
+        mode: '0644'                         # PHÂN QUYỀN: Cấp quyền đọc/ghi (chmod 0644)
+      notify: Khoi dong lai ung dung         # KÍCH HOẠT SỰ KIỆN: Nếu file cấu hình này bị thay đổi nội dung, nó sẽ ném một thông báo (notify) có tên này xuống phần 'handlers'
+      tags: config_app                       # Gắn thẻ 'config_app'
+
+    - name: 3. Kiểm tra dung lượng ổ cứng   # Tên công việc (Task 3)
+      command: df -h /                       # GỌI MODULE 'command': Chạy một lệnh Linux cơ bản bất kỳ (ở đây là lệnh xem ổ cứng)
+      register: disk_space                   # LƯU KẾT QUẢ: Chụp lại toàn bộ kết quả in ra màn hình của lệnh trên và lưu vào một biến tự đặt tên là 'disk_space'
+      changed_when: false                    # Báo Ansible đây chỉ là lệnh đọc kiểm tra, không thay đổi cấu hình máy
+      tags: check_disk
+
+    - name: 4. Dọn rác nếu ổ cứng báo đầy    # Tên công việc (Task 4)
+      command: rm -rf /tmp/cache/*           # Chạy lệnh xóa toàn bộ file rác trong thư mục cache
+      when:                                  # ĐIỀU KIỆN (IF): Chỉ cho phép chạy lệnh xóa này nếu đáp ứng ĐỒNG THỜI 2 điều kiện bên dưới:
+        - ansible_distribution == "Ubuntu"   # Điều kiện 1: OS phải là Ubuntu (biến 'ansible_distribution' được lấy tự động nhờ 'gather_facts: yes' ở trên cùng)
+        - "'100%' in disk_space.stdout"      # Điều kiện 2: Chữ '100%' phải xuất hiện trong kết quả của lệnh test ổ cứng (chính là biến disk_space lưu ở Task 3)
+      ignore_errors: yes                     # BỎ QUA LỖI: Dù lệnh xóa bị lỗi (vd: không có quyền xóa file), vẫn cứ chạy tiếp các task tiếp theo, không được làm sập cả kịch bản (fail)
+
+  post_tasks:                                # VIỆC CHẠY CUỐI CÙNG: Các tác vụ chỉ chạy sau khi toàn bộ phần 'tasks' đã xong
+    - name: 5. Hiển thị thông báo hoàn tất   # Tên công việc (Task 5)
+      debug:                                 # GỌI MODULE 'debug': Dùng để in một câu thông báo ra màn hình console (tương tự print/echo)
+        msg: "Đã cài xong máy {{ inventory_hostname }}" # In ra câu thông báo kèm theo tên/IP của máy chủ hiện tại (inventory_hostname là biến mặc định của Ansible)
+
+  handlers:                                  # CÁC TÁC VỤ NGỦ ĐÔNG: Chỉ chạy khi được 'notify' (ở Task 2) réo tên
+    - name: Khoi dong lai ung dung           # Tên handler (BẮT BUỘC PHẢI TRÙNG KHỚP từng chữ với cái tên ở phần 'notify' của Task 2)
+      service:                               # GỌI MODULE 'service': Quản lý các dịch vụ systemd
+        name: myapp                          # Tên dịch vụ cần quản lý
+        state: restarted                     # HÀNH ĐỘNG: Khởi động lại dịch vụ. (Nginx/App sẽ CHỈ restart nếu file cấu hình ở task 2 thực sự bị đổi. Nếu file ko đổi, task 2 ko báo notify, handler này ngủ tiếp)
